@@ -1,9 +1,8 @@
-# adamin/urls.py
 from django.urls import path
 from .views import (
     AdminDashboardView, ProductListCreateView, CategoryListView,
     OrderListView, PaymentListView, UserSearchView, OrderCreateView,
-    CreateCategoryView, OrderDetailView
+    CreateCategoryView, OrderDetailView, UserCreateView
 )
 
 urlpatterns = [
@@ -16,4 +15,5 @@ urlpatterns = [
     path('orders/create/', OrderCreateView.as_view(), name='admin-order-create'),
     path('dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
     path('categories/create/', CreateCategoryView.as_view(), name='admin-category-create'),
+    path('users/create/', UserCreateView.as_view(), name='admin-user-create'),
 ]

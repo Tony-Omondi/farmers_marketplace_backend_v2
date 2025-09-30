@@ -21,44 +21,44 @@ def issue_tokens_for_user(user: User):
     refresh = RefreshToken.for_user(user)
     return {"refresh": str(refresh), "access": str(refresh.access_token)}
 
-class RegisterView(generics.CreateAPIView):
-    permission_classes = [permissions.AllowAny]
-    serializer_class = RegisterSerializer
-
-    def perform_create(self, serializer):
-        user = serializer.save()
-        otp = EmailOTP.objects.filter(email=user.email, purpose=EmailOTP.PURPOSE_REGISTER, is_used=False).order_by("-created_at").first()
-        if otp:
-            send_otp_email(user.email, otp.code, purpose=EmailOTP.PURPOSE_REGISTER)
-
-class VerifyOTPView(views.APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        serializer = VerifyOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        email = serializer.validated_data["email"].lower()
-        code = serializer.validated_data["code"]
-
-        otp = EmailOTP.objects.filter(email=email, code=code, is_used=False).order_by("-created_at").first()
-        if not otp:
-            return Response({"detail": "Invalid code"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if otp.expires_at < timezone.now():
-            return Response({"detail": "Code expired"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        user.is_active = True
-        user.save()
-        otp.is_used = True
-        otp.save()
-
-        tokens = issue_tokens_for_user(user)
-        return Response({"message": "Account activated", "tokens": tokens}, status=status.HTTP_200_OK)
+# class RegisterView(generics.CreateAPIView):
+#     permission_classes = [permissions.AllowAny]
+#     serializer_class = RegisterSerializer
+#
+#     def perform_create(self, serializer):
+#         user = serializer.save()
+#         otp = EmailOTP.objects.filter(email=user.email, purpose=EmailOTP.PURPOSE_REGISTER, is_used=False).order_by("-created_at").first()
+#         if otp:
+#             send_otp_email(user.email, otp.code, purpose=EmailOTP.PURPOSE_REGISTER)
+#
+# class VerifyOTPView(views.APIView):
+#     permission_classes = [permissions.AllowAny]
+#
+#     def post(self, request):
+#         serializer = VerifyOTPSerializer(data=request.data)
+#         serializer.is_valid(raise_exception=True)
+#         email = serializer.validated_data["email"].lower()
+#         code = serializer.validated_data["code"]
+#
+#         otp = EmailOTP.objects.filter(email=email, code=code, is_used=False).order_by("-created_at").first()
+#         if not otp:
+#             return Response({"detail": "Invalid code"}, status=status.HTTP_400_BAD_REQUEST)
+#
+#         if otp.expires_at < timezone.now():
+#             return Response({"detail": "Code expired"}, status=status.HTTP_400_BAD_REQUEST)
+#
+#         try:
+#             user = User.objects.get(email=email)
+#         except User.DoesNotExist:
+#             return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+#
+#         user.is_active = True
+#         user.save()
+#         otp.is_used = True
+#         otp.save()
+#
+#         tokens = issue_tokens_for_user(user)
+#         return Response({"message": "Account activated", "tokens": tokens}, status=status.HTTP_200_OK)
 
 class LoginView(views.APIView):
     permission_classes = [permissions.AllowAny]
@@ -139,5 +139,5 @@ class MeView(views.APIView):
             "email": u.email,
             "full_name": u.full_name,
             "is_staff": u.is_staff,
-            "is_active": u.is_active  # Added is_active
+            "is_active": u.is_active
         })

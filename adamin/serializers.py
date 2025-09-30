@@ -1,4 +1,3 @@
-# adamin/serializers.py
 from rest_framework import serializers
 from accounts.models import User
 from products.models import Product, Category, ProductImage
@@ -8,6 +7,23 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'full_name', 'email', 'is_staff', 'is_active', 'date_joined']
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=True)
+
+    class Meta:
+        model = User
+        fields = ['email', 'full_name', 'password', 'is_staff']
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            email=validated_data['email'].lower(),
+            full_name=validated_data.get('full_name', ''),
+            password=validated_data['password'],
+            is_staff=validated_data.get('is_staff', False),
+            is_active=True  # Admin-created users are active by default
+        )
+        return user
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:

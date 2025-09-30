@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from orders.models import Order, OrderItem, Payment, Coupon
-from .serializers import OrderSerializer, PaymentSerializer, AdminDashboardSerializer  # Fixed import
+from .serializers import OrderSerializer, PaymentSerializer, AdminDashboardSerializer, UserCreateSerializer
 from products.models import Product, Category
 from products.serializers import ProductSerializer, CategorySerializer
 from django.contrib.auth import get_user_model
@@ -151,3 +151,18 @@ class OrderCreateView(APIView):
             return Response({"status": False, "message": "Invalid or inactive coupon"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class UserCreateView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def post(self, request):
+        try:
+            serializer = UserCreateSerializer(data=request.data)
+            if serializer.is_valid():
+                user = serializer.save()
+                logger.info(f"User {user.email} created by admin {request.user.email}")
+                return Response({'message': 'User created successfully', 'email': user.email}, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error creating user: {str(e)}")
+            return Response({'detail': 'Error creating user'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
