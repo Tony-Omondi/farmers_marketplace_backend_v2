@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from accounts.models import User
-from products.models import Product, Category, ProductImage
+from products.models import Product, Category, ProductImage, Farmer
 from orders.models import Order, OrderItem, Payment, Coupon
 
 class UserSerializer(serializers.ModelSerializer):
@@ -13,7 +13,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['email', 'full_name', 'password', 'is_staff']
+        fields = ['email', 'full_name', 'password', 'is_staff', 'is_farmer']
 
     def create(self, validated_data):
         user = User.objects.create_user(
@@ -21,8 +21,11 @@ class UserCreateSerializer(serializers.ModelSerializer):
             full_name=validated_data.get('full_name', ''),
             password=validated_data['password'],
             is_staff=validated_data.get('is_staff', False),
-            is_active=True  # Admin-created users are active by default
+            is_farmer=validated_data.get('is_farmer', False),
+            is_active=True
         )
+        if validated_data.get('is_farmer', False):
+            Farmer.objects.create(user=user)
         return user
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -41,12 +44,21 @@ class ProductImageSerializer(serializers.ModelSerializer):
         model = ProductImage
         fields = ['image']
 
+class FarmerSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField()
+
+    class Meta:
+        model = Farmer
+        fields = ['id', 'user', 'is_active']
+
 class ProductSerializer(serializers.ModelSerializer):
     category = CategorySerializer()
+    farmer = FarmerSerializer(allow_null=True)
     images = ProductImageSerializer(many=True, read_only=True)
+
     class Meta:
         model = Product
-        fields = ['id', 'name', 'description', 'price', 'stock', 'category', 'images', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'description', 'price', 'stock', 'category', 'farmer', 'is_displayed', 'images', 'created_at', 'updated_at']
 
 class CouponSerializer(serializers.ModelSerializer):
     class Meta:

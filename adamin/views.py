@@ -4,13 +4,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from orders.models import Order, OrderItem, Payment, Coupon
+from products.models import Product, Category, Farmer
+from products.serializers import ProductSerializer, CategorySerializer, FarmerSerializer
 from .serializers import OrderSerializer, PaymentSerializer, AdminDashboardSerializer, UserCreateSerializer
-from products.models import Product, Category
-from products.serializers import ProductSerializer, CategorySerializer
 from django.contrib.auth import get_user_model
 from decimal import Decimal
 import uuid
 import logging
+from django.db.models import Sum
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -21,7 +22,7 @@ class AdminDashboardView(APIView):
     def get(self, request):
         try:
             users = User.objects.all()
-            products = Product.objects.all().select_related('category').prefetch_related('images')
+            products = Product.objects.all().select_related('category', 'farmer').prefetch_related('images')
             orders = Order.objects.all().select_related('user', 'coupon', 'payment').prefetch_related('order_items__product')
             data = {
                 'users': users,
@@ -52,9 +53,9 @@ class CreateCategoryView(APIView):
 
 class ProductListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Product.objects.all()
+    queryset = Product.objects.all().select_related('category', 'farmer').prefetch_related('images')
     serializer_class = ProductSerializer
-    filterset_fields = ['category']
+    filterset_fields = ['category', 'farmer', 'is_displayed']
     search_fields = ['name', 'description']
 
 class CategoryListView(generics.ListAPIView):
@@ -112,6 +113,8 @@ class OrderCreateView(APIView):
             total_amount = 0
             for item in items:
                 product = Product.objects.get(id=item['product_id'])
+                if product.is_displayed:
+                    return Response({"status": False, "message": f"Product {product.name} is display-only and cannot be ordered"}, status=status.HTTP_400_BAD_REQUEST)
                 total_amount += Decimal(product.price) * item['quantity']
             if coupon_code:
                 coupon = Coupon.objects.get(coupon_code=coupon_code, active=True)
@@ -166,3 +169,56 @@ class UserCreateView(APIView):
         except Exception as e:
             logger.error(f"Error creating user: {str(e)}")
             return Response({'detail': 'Error creating user'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class FarmerSalesView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        try:
+            sales_data = OrderItem.objects.filter(
+                product__farmer__isnull=False
+            ).values(
+                'product__farmer__id',
+                'product__farmer__user__email',
+                'product__farmer__user__full_name'
+            ).annotate(
+                total_sales=Sum('quantity' * 'product_price', output_field=DecimalField())
+            ).order_by('-total_sales')
+
+            response_data = [
+                {
+                    'farmer_id': item['product__farmer__id'],
+                    'email': item['product__farmer__user__email'],
+                    'full_name': item['product__farmer__user__full_name'],
+                    'total_sales': float(item['total_sales'])
+                }
+                for item in sales_data
+            ]
+
+            logger.info(f"Farmer sales data fetched by {request.user.email}")
+            return Response(response_data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching farmer sales data: {str(e)}")
+            return Response({'detail': 'Error fetching farmer sales data'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class FarmerListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        try:
+            farmers = Farmer.objects.select_related('user').filter(is_active=True).values(
+                'id', 'user__email', 'user__full_name'
+            )
+            data = [
+                {
+                    'id': farmer['id'],
+                    'email': farmer['user__email'],
+                    'full_name': farmer['user__full_name']
+                }
+                for farmer in farmers
+            ]
+            logger.info(f"Farmers fetched by {request.user.email}")
+            return Response(data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching farmers: {str(e)}")
+            return Response({'detail': 'Error fetching farmers'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

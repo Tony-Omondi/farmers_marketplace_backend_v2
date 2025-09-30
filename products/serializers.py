@@ -1,6 +1,13 @@
-# products/serializers.py
 from rest_framework import serializers
-from .models import Product, ProductImage, Category
+from .models import Product, ProductImage, Category, Farmer
+from accounts.models import User
+
+class FarmerSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField()  # Returns user.email
+
+    class Meta:
+        model = Farmer
+        fields = ['id', 'user', 'is_active']
 
 class ProductImageSerializer(serializers.ModelSerializer):
     image = serializers.SerializerMethodField()
@@ -17,10 +24,11 @@ class ProductSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     image_files = serializers.ListField(child=serializers.ImageField(), write_only=True, required=False)
     category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all(), allow_null=True)
+    farmer = serializers.PrimaryKeyRelatedField(queryset=Farmer.objects.all(), allow_null=True)
 
     class Meta:
         model = Product
-        fields = ["id", "name", "description", "price", "stock", "category", "images", "image_files", "created_at", "updated_at"]
+        fields = ["id", "name", "description", "price", "stock", "category", "farmer", "is_displayed", "images", "image_files", "created_at", "updated_at"]
 
     def create(self, validated_data):
         image_files = validated_data.pop('image_files', [])

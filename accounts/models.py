@@ -1,4 +1,3 @@
-# accounts/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.utils import timezone
@@ -26,15 +25,16 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_active", True)
+        extra_fields.setdefault("is_farmer", False)
         return self.create_user(email, password, full_name, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     full_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True)
-    is_active = models.BooleanField(default=False)   # becomes True after OTP verify
+    is_active = models.BooleanField(default=False)  # Becomes True after OTP verification
     is_staff = models.BooleanField(default=False)
-
+    is_farmer = models.BooleanField(default=False, help_text="Designates whether this user is a farmer")
     date_joined = models.DateTimeField(default=timezone.now)
 
     USERNAME_FIELD = "email"

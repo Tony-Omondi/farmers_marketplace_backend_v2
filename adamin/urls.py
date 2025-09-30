@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     AdminDashboardView, ProductListCreateView, CategoryListView,
     OrderListView, PaymentListView, UserSearchView, OrderCreateView,
-    CreateCategoryView, OrderDetailView, UserCreateView
+    CreateCategoryView, OrderDetailView, UserCreateView, FarmerSalesView,FarmerListView
 )
 
 urlpatterns = [
@@ -16,4 +16,6 @@ urlpatterns = [
     path('dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
     path('categories/create/', CreateCategoryView.as_view(), name='admin-category-create'),
     path('users/create/', UserCreateView.as_view(), name='admin-user-create'),
+    path('farmers/sales/', FarmerSalesView.as_view(), name='admin-farmer-sales'),
+    path('api/adamin/farmers/', FarmerListView.as_view(), name='farmer-list'),
 ]

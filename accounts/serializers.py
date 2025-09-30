@@ -1,4 +1,3 @@
-# accounts/serializers.py
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
@@ -13,6 +12,7 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
     password2 = serializers.CharField(write_only=True)
+    is_farmer = serializers.BooleanField(default=False)
 
     def validate(self, data):
         if data["password"] != data["password2"]:
@@ -24,24 +24,28 @@ class RegisterSerializer(serializers.Serializer):
         full_name = validated_data["full_name"]
         email = validated_data["email"].lower()
         password = validated_data["password"]
+        is_farmer = validated_data["is_farmer"]
 
         # Create user inactive until OTP verify
-        user, created = User.objects.get_or_create(email=email, defaults={"full_name": full_name})
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={"full_name": full_name, "is_farmer": is_farmer}
+        )
         if not created:
-            # if user exists and not active, we still can resend OTP; but fail if fully active
+            # If user exists and not active, allow resending OTP; fail if active
             if user.is_active:
                 raise serializers.ValidationError({"email": "User already exists and is active"})
             user.full_name = full_name
+            user.is_farmer = is_farmer
             user.set_password(password)
             user.save()
         else:
             user.set_password(password)
             user.is_active = False
+            user.is_farmer = is_farmer
             user.save()
 
         # Create OTP
-        code = EmailOTP._meta.get_field("code").default() if hasattr(EmailOTP._meta.get_field("code"), "default") else None
-        # generate fresh code
         code = ''.join(__import__("random").choices("0123456789", k=6))
         EmailOTP.objects.create(
             email=email,
@@ -49,7 +53,7 @@ class RegisterSerializer(serializers.Serializer):
             purpose=EmailOTP.PURPOSE_REGISTER,
             expires_at=timezone.now() + timedelta(minutes=15),
         )
-        # Email sending handled in view/util
+        # Email sending handled in view
         return user
 
 class VerifyOTPSerializer(serializers.Serializer):

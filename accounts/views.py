@@ -1,4 +1,3 @@
-# accounts/views.py
 from datetime import timedelta
 from django.utils import timezone
 from django.contrib.auth import authenticate, get_user_model
@@ -6,6 +5,7 @@ from rest_framework import status, permissions, views, generics
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import EmailOTP
+from products.models import Farmer
 from .serializers import (
     RegisterSerializer, VerifyOTPSerializer, LoginSerializer,
     ForgotPasswordSerializer, ResetPasswordSerializer
@@ -21,44 +21,52 @@ def issue_tokens_for_user(user: User):
     refresh = RefreshToken.for_user(user)
     return {"refresh": str(refresh), "access": str(refresh.access_token)}
 
-# class RegisterView(generics.CreateAPIView):
-#     permission_classes = [permissions.AllowAny]
-#     serializer_class = RegisterSerializer
-#
-#     def perform_create(self, serializer):
-#         user = serializer.save()
-#         otp = EmailOTP.objects.filter(email=user.email, purpose=EmailOTP.PURPOSE_REGISTER, is_used=False).order_by("-created_at").first()
-#         if otp:
-#             send_otp_email(user.email, otp.code, purpose=EmailOTP.PURPOSE_REGISTER)
-#
-# class VerifyOTPView(views.APIView):
-#     permission_classes = [permissions.AllowAny]
-#
-#     def post(self, request):
-#         serializer = VerifyOTPSerializer(data=request.data)
-#         serializer.is_valid(raise_exception=True)
-#         email = serializer.validated_data["email"].lower()
-#         code = serializer.validated_data["code"]
-#
-#         otp = EmailOTP.objects.filter(email=email, code=code, is_used=False).order_by("-created_at").first()
-#         if not otp:
-#             return Response({"detail": "Invalid code"}, status=status.HTTP_400_BAD_REQUEST)
-#
-#         if otp.expires_at < timezone.now():
-#             return Response({"detail": "Code expired"}, status=status.HTTP_400_BAD_REQUEST)
-#
-#         try:
-#             user = User.objects.get(email=email)
-#         except User.DoesNotExist:
-#             return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-#
-#         user.is_active = True
-#         user.save()
-#         otp.is_used = True
-#         otp.save()
-#
-#         tokens = issue_tokens_for_user(user)
-#         return Response({"message": "Account activated", "tokens": tokens}, status=status.HTTP_200_OK)
+class RegisterView(generics.CreateAPIView):
+    permission_classes = [permissions.AllowAny]
+    serializer_class = RegisterSerializer
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        # Create Farmer instance if is_farmer=True
+        if user.is_farmer:
+            Farmer.objects.get_or_create(user=user)
+        otp = EmailOTP.objects.filter(email=user.email, purpose=EmailOTP.PURPOSE_REGISTER, is_used=False).order_by("-created_at").first()
+        if otp:
+            send_otp_email(user.email, otp.code, purpose=EmailOTP.PURPOSE_REGISTER)
+        logger.info(f"User registered: {user.email}, is_farmer: {user.is_farmer}")
+
+class VerifyOTPView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = VerifyOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].lower()
+        code = serializer.validated_data["code"]
+
+        otp = EmailOTP.objects.filter(email=email, code=code, is_used=False, purpose=EmailOTP.PURPOSE_REGISTER).order_by("-created_at").first()
+        if not otp:
+            logger.warning(f"Invalid OTP attempt for {email}")
+            return Response({"detail": "Invalid code"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if otp.expires_at < timezone.now():
+            logger.warning(f"Expired OTP attempt for {email}")
+            return Response({"detail": "Code expired"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            logger.error(f"User not found for OTP verification: {email}")
+            return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        user.is_active = True
+        user.save()
+        otp.is_used = True
+        otp.save()
+
+        tokens = issue_tokens_for_user(user)
+        logger.info(f"Account activated for {email}")
+        return Response({"message": "Account activated", "tokens": tokens}, status=status.HTTP_200_OK)
 
 class LoginView(views.APIView):
     permission_classes = [permissions.AllowAny]
@@ -72,11 +80,14 @@ class LoginView(views.APIView):
 
         user = authenticate(request, email=email, password=password)
         if not user:
+            logger.warning(f"Invalid login attempt for {email}")
             return Response({"detail": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
         if not user.is_active:
+            logger.warning(f"Inactive account login attempt for {email}")
             return Response({"detail": "Please verify your email first"}, status=status.HTTP_403_FORBIDDEN)
 
         tokens = issue_tokens_for_user(user)
+        logger.info(f"User logged in: {email}")
         return Response({"message": "Logged in", "tokens": tokens}, status=status.HTTP_200_OK)
 
 class ForgotPasswordView(views.APIView):
@@ -90,6 +101,7 @@ class ForgotPasswordView(views.APIView):
         try:
             User.objects.get(email=email)
         except User.DoesNotExist:
+            logger.info(f"Forgot password request for non-existent email: {email}")
             return Response({"message": "If the email exists, an OTP has been sent."}, status=status.HTTP_200_OK)
 
         otp = EmailOTP.objects.create(
@@ -99,6 +111,7 @@ class ForgotPasswordView(views.APIView):
             expires_at=timezone.now() + timedelta(minutes=15),
         )
         send_otp_email(email, otp.code, purpose=EmailOTP.PURPOSE_RESET)
+        logger.info(f"Password reset OTP sent to {email}")
         return Response({"message": "OTP sent if account exists"}, status=status.HTTP_200_OK)
 
 class ResetPasswordView(views.APIView):
@@ -113,13 +126,16 @@ class ResetPasswordView(views.APIView):
 
         otp = EmailOTP.objects.filter(email=email, code=code, is_used=False, purpose=EmailOTP.PURPOSE_RESET).order_by("-created_at").first()
         if not otp:
+            logger.warning(f"Invalid password reset OTP for {email}")
             return Response({"detail": "Invalid code"}, status=status.HTTP_400_BAD_REQUEST)
         if otp.expires_at < timezone.now():
+            logger.warning(f"Expired password reset OTP for {email}")
             return Response({"detail": "Code expired"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
+            logger.error(f"User not found for password reset: {email}")
             return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
         user.set_password(new_password)
@@ -127,17 +143,20 @@ class ResetPasswordView(views.APIView):
         otp.is_used = True
         otp.save()
 
+        logger.info(f"Password reset successful for {email}")
         return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)
 
 class MeView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
+
     def get(self, request):
         u = request.user
-        logger.info(f"Me response for user {u.email}: is_staff={u.is_staff}, is_active={u.is_active}")
+        logger.info(f"Me response for user {u.email}: is_staff={u.is_staff}, is_active={u.is_active}, is_farmer={u.is_farmer}")
         return Response({
             "id": str(u.id),
             "email": u.email,
             "full_name": u.full_name,
             "is_staff": u.is_staff,
-            "is_active": u.is_active
+            "is_active": u.is_active,
+            "is_farmer": u.is_farmer
         })
