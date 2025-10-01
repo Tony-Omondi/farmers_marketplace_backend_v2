@@ -164,7 +164,7 @@ class InitiatePaymentView(APIView):
         data = {
             "email": cart.user.email,
             "amount": amount,
-            "callback_url": 'http://127.0.0.1:8000/payment-callback/',
+            "callback_url": 'http://localhost:5173/payment-callback',
             "metadata": {
                 "cart_id": str(cart.uid),
                 "custom_fields": [
