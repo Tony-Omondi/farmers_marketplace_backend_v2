@@ -164,7 +164,7 @@ class InitiatePaymentView(APIView):
         data = {
             "email": cart.user.email,
             "amount": amount,
-            "callback_url": 'http://localhost:5173/payment-callback',
+            "callback_url": 'https://farmers-marketplace-front-end-v2.vercel.app/payment-callback',
             "metadata": {
                 "cart_id": str(cart.uid),
                 "custom_fields": [
