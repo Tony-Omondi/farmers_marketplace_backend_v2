@@ -11,7 +11,9 @@ from django.contrib.auth import get_user_model
 from decimal import Decimal
 import uuid
 import logging
-from django.db.models import Sum
+from django.db.models import Sum, Count, Max, ExpressionWrapper, DecimalField, F
+from django.utils import timezone
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -175,31 +177,71 @@ class FarmerSalesView(APIView):
 
     def get(self, request):
         try:
-            sales_data = OrderItem.objects.filter(
+            # Get query parameters for custom date range
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            
+            # Base queryset for completed orders
+            base_queryset = OrderItem.objects.filter(
+                order__status__in=['confirmed', 'paid', 'shipped', 'delivered'],
                 product__farmer__isnull=False
-            ).values(
-                'product__farmer__id',
-                'product__farmer__user__email',
-                'product__farmer__user__full_name'
-            ).annotate(
-                total_sales=Sum('quantity' * 'product_price', output_field=DecimalField())
-            ).order_by('-total_sales')
+            )
 
-            response_data = [
-                {
-                    'farmer_id': item['product__farmer__id'],
-                    'email': item['product__farmer__user__email'],
-                    'full_name': item['product__farmer__user__full_name'],
-                    'total_sales': float(item['total_sales'])
-                }
-                for item in sales_data
-            ]
+            # Calculate time-based filters
+            now = timezone.now()
+            periods = {
+                'past_day': now - timedelta(days=1),
+                'past_week': now - timedelta(days=7),
+                'past_month': now - timedelta(days=30),
+                'past_year': now - timedelta(days=365),
+            }
+
+            # Custom date range filtering
+            if start_date and end_date:
+                from django.utils.dateparse import parse_date
+                start_date = parse_date(start_date)
+                end_date = parse_date(end_date)
+                if start_date and end_date:
+                    base_queryset = base_queryset.filter(order__created_at__date__range=[start_date, end_date])
+
+            # Aggregate sales data for each time period
+            sales_data = {}
+            for period, start_time in periods.items():
+                period_queryset = base_queryset.filter(order__created_at__gte=start_time) if not (start_date and end_date) else base_queryset
+                period_sales = period_queryset.values(
+                    'product__farmer__id',
+                    'product__farmer__user__email',
+                    'product__farmer__user__full_name'
+                ).annotate(
+                    total_sales=ExpressionWrapper(
+                        Sum(F('quantity') * F('product_price')),
+                        output_field=DecimalField(max_digits=10, decimal_places=2)
+                    ),
+                    order_count=Count('order'),
+                    last_sale_date=Max('order__created_at')
+                )
+                sales_data[period] = [
+                    {
+                        'farmer_id': item['product__farmer__id'],
+                        'email': item['product__farmer__user__email'],
+                        'full_name': item['product__farmer__user__full_name'],
+                        'total_sales': float(item['total_sales']) if item['total_sales'] is not None else 0.0,
+                        'order_count': item['order_count'],
+                        'last_sale_date': item['last_sale_date'].isoformat() if item['last_sale_date'] else None
+                    }
+                    for item in period_sales
+                ]
+
+            # If custom date range is applied, include it as 'custom' period
+            if start_date and end_date:
+                sales_data['custom'] = sales_data['past_day']  # Use the filtered data as custom period
+                del sales_data['past_day']  # Avoid duplication
 
             logger.info(f"Farmer sales data fetched by {request.user.email}")
-            return Response(response_data, status=status.HTTP_200_OK)
+            return Response(sales_data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error fetching farmer sales data: {str(e)}")
-            return Response({'detail': 'Error fetching farmer sales data'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'detail': f'Error fetching farmer sales data: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class FarmerListView(APIView):
     permission_classes = [IsAuthenticated, IsAdminUser]

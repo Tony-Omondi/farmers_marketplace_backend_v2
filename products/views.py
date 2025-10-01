@@ -1,7 +1,7 @@
 from rest_framework import viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import IsAdminUser,  IsAuthenticated
 from rest_framework import status
 from .models import Product, Category, Farmer
 from .serializers import ProductSerializer, CategorySerializer, FarmerSerializer
@@ -13,12 +13,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ProductViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated]
     queryset = Product.objects.all().select_related('category', 'farmer').prefetch_related('images').order_by("-created_at")
     serializer_class = ProductSerializer
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated]
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 
