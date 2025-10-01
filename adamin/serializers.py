@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from accounts.models import User
 from products.models import Product, Category, ProductImage, Farmer
-from orders.models import Order, OrderItem, Payment, Coupon
+from orders.models import Order, OrderItem, Payment, Coupon, Cart
+from orders.serializers import CartSerializer, CartItemSerializer
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -89,3 +90,4 @@ class AdminDashboardSerializer(serializers.Serializer):
     users = UserSerializer(many=True)
     products = ProductSerializer(many=True)
     orders = OrderSerializer(many=True)
+    carts = CartSerializer(many=True, read_only=True)  # Added to include carts in dashboard if needed

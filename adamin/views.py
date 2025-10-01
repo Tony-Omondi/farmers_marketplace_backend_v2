@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from orders.models import Order, OrderItem, Payment, Coupon
+from orders.models import Order, OrderItem, Payment, Coupon, Cart, CartItem
 from products.models import Product, Category, Farmer
 from products.serializers import ProductSerializer, CategorySerializer, FarmerSerializer
 from .serializers import OrderSerializer, PaymentSerializer, AdminDashboardSerializer, UserCreateSerializer
@@ -14,10 +14,12 @@ import logging
 from django.db.models import Sum, Count, Max, ExpressionWrapper, DecimalField, F
 from django.utils import timezone
 from datetime import timedelta
+from orders.serializers import CartSerializer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+# Existing views (unchanged)
 class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated, IsAdminUser]
 
@@ -177,17 +179,12 @@ class FarmerSalesView(APIView):
 
     def get(self, request):
         try:
-            # Get query parameters for custom date range
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
-            
-            # Base queryset for completed orders
             base_queryset = OrderItem.objects.filter(
                 order__status__in=['confirmed', 'paid', 'shipped', 'delivered'],
                 product__farmer__isnull=False
             )
-
-            # Calculate time-based filters
             now = timezone.now()
             periods = {
                 'past_day': now - timedelta(days=1),
@@ -195,16 +192,12 @@ class FarmerSalesView(APIView):
                 'past_month': now - timedelta(days=30),
                 'past_year': now - timedelta(days=365),
             }
-
-            # Custom date range filtering
             if start_date and end_date:
                 from django.utils.dateparse import parse_date
                 start_date = parse_date(start_date)
                 end_date = parse_date(end_date)
                 if start_date and end_date:
                     base_queryset = base_queryset.filter(order__created_at__date__range=[start_date, end_date])
-
-            # Aggregate sales data for each time period
             sales_data = {}
             for period, start_time in periods.items():
                 period_queryset = base_queryset.filter(order__created_at__gte=start_time) if not (start_date and end_date) else base_queryset
@@ -231,12 +224,9 @@ class FarmerSalesView(APIView):
                     }
                     for item in period_sales
                 ]
-
-            # If custom date range is applied, include it as 'custom' period
             if start_date and end_date:
-                sales_data['custom'] = sales_data['past_day']  # Use the filtered data as custom period
-                del sales_data['past_day']  # Avoid duplication
-
+                sales_data['custom'] = sales_data['past_day']
+                del sales_data['past_day']
             logger.info(f"Farmer sales data fetched by {request.user.email}")
             return Response(sales_data, status=status.HTTP_200_OK)
         except Exception as e:
@@ -264,3 +254,81 @@ class FarmerListView(APIView):
         except Exception as e:
             logger.error(f"Error fetching farmers: {str(e)}")
             return Response({'detail': 'Error fetching farmers'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# New views for admin cart management
+class AdminCartListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        try:
+            carts = Cart.objects.filter(is_paid=False).select_related('user', 'coupon').prefetch_related('cart_items__product')
+            serializer = CartSerializer(carts, many=True, context={'request': request})
+            logger.info(f"Unpaid carts fetched by {request.user.email}")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching unpaid carts: {str(e)}")
+            return Response({'detail': 'Error fetching carts'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AdminCartDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request, cart_id):
+        try:
+            cart = Cart.objects.select_related('user', 'coupon').prefetch_related('cart_items__product').get(uid=cart_id, is_paid=False)
+            serializer = CartSerializer(cart, context={'request': request})
+            logger.info(f"Cart details for {cart_id} fetched by {request.user.email}")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Cart.DoesNotExist:
+            logger.warning(f"Cart {cart_id} not found for {request.user.email}")
+            return Response({'detail': 'Cart not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error fetching cart details for {cart_id}: {str(e)}")
+            return Response({'detail': 'Error fetching cart details'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request, cart_id):
+        try:
+            cart = Cart.objects.get(uid=cart_id, is_paid=False)
+            items = request.data.get('items', [])
+            coupon_code = request.data.get('coupon_code', '')
+
+            # Validate items
+            for item in items:
+                product = Product.objects.get(id=item['product_id'])
+                if item['quantity'] > product.stock:
+                    return Response({
+                        "status": False,
+                        "message": f"Insufficient stock for {product.name}. Available: {product.stock}"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Update coupon
+            if coupon_code:
+                try:
+                    coupon = Coupon.objects.get(coupon_code=coupon_code, active=True)
+                    cart.coupon = coupon
+                except Coupon.DoesNotExist:
+                    return Response({"status": False, "message": "Invalid or inactive coupon"}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                cart.coupon = None
+
+            # Update cart items
+            cart.cart_items.all().delete()
+            for item in items:
+                product = Product.objects.get(id=item['product_id'])
+                CartItem.objects.create(
+                    cart=cart,
+                    product=product,
+                    quantity=item['quantity']
+                )
+
+            cart.save()
+            serializer = CartSerializer(cart, context={'request': request})
+            logger.info(f"Cart {cart_id} updated by {request.user.email}")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Cart.DoesNotExist:
+            logger.warning(f"Cart {cart_id} not found for {request.user.email}")
+            return Response({'detail': 'Cart not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Product.DoesNotExist:
+            return Response({"status": False, "message": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error updating cart {cart_id}: {str(e)}")
+            return Response({'detail': f'Error updating cart: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

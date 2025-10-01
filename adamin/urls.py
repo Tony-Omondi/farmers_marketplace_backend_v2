@@ -2,7 +2,8 @@ from django.urls import path
 from .views import (
     AdminDashboardView, ProductListCreateView, CategoryListView,
     OrderListView, PaymentListView, UserSearchView, OrderCreateView,
-    CreateCategoryView, OrderDetailView, UserCreateView, FarmerSalesView,FarmerListView
+    CreateCategoryView, OrderDetailView, UserCreateView, FarmerSalesView,
+    FarmerListView, AdminCartListView, AdminCartDetailView
 )
 
 urlpatterns = [
@@ -17,5 +18,7 @@ urlpatterns = [
     path('categories/create/', CreateCategoryView.as_view(), name='admin-category-create'),
     path('users/create/', UserCreateView.as_view(), name='admin-user-create'),
     path('farmers/sales/', FarmerSalesView.as_view(), name='admin-farmer-sales'),
-    path('api/adamin/farmers/', FarmerListView.as_view(), name='farmer-list'),
+    path('farmers/', FarmerListView.as_view(), name='farmer-list'),
+    path('carts/', AdminCartListView.as_view(), name='admin-cart-list'),
+    path('carts/<str:cart_id>/', AdminCartDetailView.as_view(), name='admin-cart-detail'),
 ]

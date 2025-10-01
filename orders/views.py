@@ -1,14 +1,14 @@
 from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import Cart, CartItem, Order, OrderItem, Payment, Coupon
-from .serializers import CartSerializer, CartItemSerializer, OrderSerializer, PaymentSerializer
 from products.models import Product
+from .serializers import CartSerializer, CartItemSerializer, OrderSerializer, PaymentSerializer
 from django.conf import settings
 from django.core.mail import send_mail
 from rest_framework import serializers
-from django.contrib.auth import get_user_model  # Use get_user_model for custom User
+from django.contrib.auth import get_user_model
 import requests
 import hmac
 import hashlib
@@ -17,8 +17,9 @@ from decimal import Decimal
 import uuid
 
 logger = logging.getLogger(__name__)
-User = get_user_model()  # Use custom User model (accounts.User)
+User = get_user_model()
 
+# Existing views (unchanged)
 class CartListCreateView(generics.ListCreateAPIView):
     serializer_class = CartSerializer
     permission_classes = [IsAuthenticated]
@@ -132,7 +133,17 @@ class InitiatePaymentView(APIView):
 
     def post(self, request):
         logger.info(f"Payment initiation started for user: {request.user.email}")
-        cart = Cart.objects.filter(user=self.request.user, is_paid=False).first()
+        cart_id = request.data.get('cart_id')
+        cart = None
+        if cart_id and request.user.is_staff:
+            try:
+                cart = Cart.objects.get(uid=cart_id, is_paid=False)
+            except Cart.DoesNotExist:
+                logger.error(f"Cart not found: cart_id={cart_id}")
+                return Response({"status": False, "message": "Cart not found"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            cart = Cart.objects.filter(user=self.request.user, is_paid=False).first()
+        
         if not cart or not cart.cart_items.exists():
             logger.error("Cart is empty or not found")
             return Response({"status": False, "message": "Your cart is empty"}, status=status.HTTP_400_BAD_REQUEST)
@@ -151,9 +162,9 @@ class InitiatePaymentView(APIView):
             return Response({"status": False, "message": "Invalid cart total"}, status=status.HTTP_400_BAD_REQUEST)
 
         data = {
-            "email": self.request.user.email,
+            "email": cart.user.email,
             "amount": amount,
-            "callback_url": 'https://desktop-farmers-frontend.vercel.app/payment-callback/',
+            "callback_url": 'http://127.0.0.1:8000/payment-callback/',
             "metadata": {
                 "cart_id": str(cart.uid),
                 "custom_fields": [
@@ -421,3 +432,81 @@ class PaymentCallbackView(APIView):
             return Response({"status": True, "order_id": order.order_id}, status=status.HTTP_200_OK)
         
         return Response({"status": False, "message": "Invalid webhook event"}, status=status.HTTP_400_BAD_REQUEST)
+
+# New views for admin cart management
+class AdminCartListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        try:
+            carts = Cart.objects.filter(is_paid=False).select_related('user', 'coupon').prefetch_related('cart_items__product')
+            serializer = CartSerializer(carts, many=True, context={'request': request})
+            logger.info(f"Unpaid carts fetched by {request.user.email}")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching unpaid carts: {str(e)}")
+            return Response({'detail': 'Error fetching carts'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AdminCartDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request, cart_id):
+        try:
+            cart = Cart.objects.select_related('user', 'coupon').prefetch_related('cart_items__product').get(uid=cart_id, is_paid=False)
+            serializer = CartSerializer(cart, context={'request': request})
+            logger.info(f"Cart details for {cart_id} fetched by {request.user.email}")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Cart.DoesNotExist:
+            logger.warning(f"Cart {cart_id} not found for {request.user.email}")
+            return Response({'detail': 'Cart not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error fetching cart details for {cart_id}: {str(e)}")
+            return Response({'detail': 'Error fetching cart details'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request, cart_id):
+        try:
+            cart = Cart.objects.get(uid=cart_id, is_paid=False)
+            items = request.data.get('items', [])
+            coupon_code = request.data.get('coupon_code', '')
+
+            # Validate items
+            for item in items:
+                product = Product.objects.get(id=item['product_id'])
+                if item['quantity'] > product.stock:
+                    return Response({
+                        "status": False,
+                        "message": f"Insufficient stock for {product.name}. Available: {product.stock}"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Update coupon
+            if coupon_code:
+                try:
+                    coupon = Coupon.objects.get(coupon_code=coupon_code, active=True)
+                    cart.coupon = coupon
+                except Coupon.DoesNotExist:
+                    return Response({"status": False, "message": "Invalid or inactive coupon"}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                cart.coupon = None
+
+            # Update cart items
+            cart.cart_items.all().delete()
+            for item in items:
+                product = Product.objects.get(id=item['product_id'])
+                CartItem.objects.create(
+                    cart=cart,
+                    product=product,
+                    quantity=item['quantity']
+                )
+
+            cart.save()
+            serializer = CartSerializer(cart, context={'request': request})
+            logger.info(f"Cart {cart_id} updated by {request.user.email}")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Cart.DoesNotExist:
+            logger.warning(f"Cart {cart_id} not found for {request.user.email}")
+            return Response({'detail': 'Cart not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Product.DoesNotExist:
+            return Response({"status": False, "message": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error updating cart {cart_id}: {str(e)}")
+            return Response({'detail': f'Error updating cart: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

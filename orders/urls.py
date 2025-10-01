@@ -8,6 +8,8 @@ from .views import (
     OrderDetailView,
     InitiatePaymentView,
     PaymentCallbackView,
+    AdminCartListView,
+    AdminCartDetailView,
 )
 
 app_name = 'orders'
@@ -21,4 +23,6 @@ urlpatterns = [
     path('orders/<int:pk>/', OrderDetailView.as_view(), name='order-detail'),
     path('orders/payment/initiate/', InitiatePaymentView.as_view(), name='initiate-payment'),
     path('orders/payment/callback/', PaymentCallbackView.as_view(), name='payment-callback'),
+    path('adamin/carts/', AdminCartListView.as_view(), name='admin-cart-list'),
+    path('adamin/carts/<str:cart_id>/', AdminCartDetailView.as_view(), name='admin-cart-detail'),
 ]
