@@ -1,9 +1,9 @@
 from rest_framework import viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAdminUser,  IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework import status
-from .models import Product, Category, Farmer
+from .models import Product, Category, Farmer, ProductImage
 from .serializers import ProductSerializer, CategorySerializer, FarmerSerializer
 from orders.models import OrderItem
 from django.db.models import Sum, F, DecimalField
@@ -54,3 +54,18 @@ class FarmerSalesView(APIView):
         except Exception as e:
             logger.error(f"Error fetching farmer sales data: {str(e)}")
             return Response({'detail': 'Error fetching farmer sales data'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ProductImageDeleteView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, id):
+        try:
+            product = Product.objects.get(id=id)
+            image_id = request.data.get('image_id')
+            image = product.images.get(id=image_id)
+            image.delete()
+            return Response({"detail": "Image deleted successfully"}, status=status.HTTP_200_OK)
+        except Product.DoesNotExist:
+            return Response({"detail": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+        except ProductImage.DoesNotExist:
+            return Response({"detail": "Image not found"}, status=status.HTTP_404_NOT_FOUND)
